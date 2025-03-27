@@ -1,0 +1,799 @@
+---
+title: "DSE5004 Segmentation and Profiling"
+author: "Tracey Zicherman"
+date: "2024-06-19"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+always_allow_html: true
+---
+
+## Setup
+
+```{r setup, include=FALSE}
+# set code chunk knit defaults
+knitr::opts_chunk$set(include=FALSE)
+```
+
+```{r libraries}
+library(rpart)
+library(rpart.plot)
+library(vip)
+library(tidyverse)
+library(plotly)
+library(skimr)
+
+```
+
+## Load and Inspect Data
+
+```{r}
+# load dataset
+data <- read_csv("Clean_Customer_Dataset.csv")
+
+# basic cleaning
+data <- data %>% 
+  select(-1) %>% # drop index number column
+  mutate(across(where(is.character), as.factor)) %>% # cast characters to factor
+  mutate(across(where(is.numeric), ~ ifelse(is.infinite(.), 0, .))) %>% # get rid of subtle and unexplained error where 0's of AvgCarValue are read in as inf
+  mutate(HouseholdSize = case_when(
+    floor(HouseholdSize) == 2 ~ 2,
+    TRUE ~ HouseholdSize)
+  ) # missed 2.20 value in original cleaning step
+
+# inspect dataset features and types
+data
+```
+
+## Customer Features Review and Selection
+
+### Create Target Feature: `HighRetention`
+
+We use the integer feature `PhoneCoTenure` which indicates the number of months a customer has been with the company, to identify long-term vs short-term, i.e. high-vs-low retention customers.
+
+```{r tenure_dist_plot}
+p <- data %>%
+  ggplot(aes(x = PhoneCoTenure)) +
+  geom_histogram(binwidth = 1, fill = "darkblue", color = "black") +
+  labs(title = "Histogram of PhoneCoTenure",
+       x = "PhoneCoTenure",
+       y = "Frequency") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+```{r tenure_summary_stats}
+skim(data %>% select(PhoneCoTenure))
+```
+
+For our purposes, we will define high retention customers to be those who have a tenure equal to or greater than 75% of the total customer database, i.e. those in the upper quartile (customers for which `PhoneCoTenure > 59`). We'll code this as Yes/No and treat it as a factor for agreement with later packages.
+
+***SIDEKICK: How to mention that this is a new feature? It wasn't included in Due Diligence.***
+
+```{r}
+# proportion of customers with maximum tenure
+data <- data %>% 
+  mutate(HighRetention = as.factor(PhoneCoTenure > 59))
+
+# update .csv
+write_csv(data, "New_Customer_Dataset.csv")
+```
+
+```{r highretention_dist}
+
+retention_prop <- data %>%
+  group_by(HighRetention) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / sum(count))
+
+
+p <- retention_prop %>%
+  ggplot(aes(x = HighRetention, y = proportion)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  labs(title = "Distribution of HighRetention",
+       x = "HighRetention",
+       y = "Proportion") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+### Feature Selection
+
+#### Grouping By Type
+
+```{r}
+# categorical feature names
+cat_feats <- data %>%
+  select(where(is.factor)) %>%
+  colnames()
+
+# numeric feature names
+num_feats <- data %>%
+  select(where(is.numeric)) %>%
+  colnames()
+
+# print feature groupings
+cat("Categorical: \n\n \t", cat_feats, "\n\n")
+cat("Numeric: \n\n \t", num_feats, "\n\n")
+```
+
+#### Grouping By Meaning
+
+We provide a grouping of features by their meaning. Note that this grouping is somewhat subjective, and based on an inference of the meaning of the feature name, rather than a data dictionary, which could provide more clarity on the significance of the corresponding feature.
+
+```{r group_features}
+
+# demographic features not related to personal finances
+demo_feats <- sort(c('Gender', 'JobCategory', 'MaritalStatus', 'PoliticalPartyMem', 
+                    'Retired', 'UnionMember', 'Age', 'EducationYears', 'EmploymentLength',
+                    'HouseholdSize', 'TownSize', 'CommuteTime'))
+
+# features having to do with personal finances 
+fin_feats <- sort(c('LoanDefault', 'HHIncome', 'HHIncomeScaled', 'CardItemsMonthly', 'CardTenure', 
+                   'CardSpendMonth', 'CardSpendMonthScaled', 'CreditDebt', 'DebtToIncomeRatio',
+                   'OtherDebt'))
+
+# features related to customer ownership of goods
+own_feats <- sort(c('CarBrand', 'CarOwnership', 'OwnsFax', 'OwnsGameSystem', 
+                   'OwnsMobileDevice', 'OwnsPC', 'CarsOwned', 'CarValue', 'CarValueScaled',
+                   'HomeOwner', 'Internet', 'NumberBirds', 'NumberCats', 'NumberDogs', 'NumberPets'))
+
+# features related to customer behavior, both with respect to company business or otherwise
+behave_feats <- sort(c('NewsSubscriber', 'Votes', 'TVWatchingHours', 'ActiveLifestyle'))
+
+# account features not related to billing 
+acct_feats <- sort(c('CustomerID', 'CallerID', 'CallForward', 'CallWait', 'CallingCard',
+                    'EquipmentRental', 'Multiline',  'Pager', 'ThreeWayCalling', 'VM',
+                    'WirelessData', 'PhoneCoTenure', 'Region', 'DataLastMonth',
+                    'DataOverTenure', 'DataOverTenureScaled', 'EquipmentLastMonth',
+                    'EquipmentOverTenure', 'VoiceLastMonth', 'VoiceOverTenure',
+                    'VoiceOverTenureScaled'))
+
+# features related to billing
+bill_feats <- sort(c('CreditCard', 'EBilling'))
+
+# collect grouped features
+feats_by_meaning <- c('CustomerID', demo_feats, fin_feats, own_feats, behave_feats, acct_feats, bill_feats)
+
+# print feature groupings
+cat("Demographic: \n\n \t", demo_feats, "\n\n")
+cat("Personal Finance: \n\n \t ", fin_feats, "\n\n")
+cat("Ownership: \n\n \t", own_feats, "\n\n")
+cat("Behavioral: \n\n \t", behave_feats, "\n\n")
+cat("Account: \n\n \t", acct_feats, "\n\n")
+cat("Billing: \n\n \t", bill_feats, "\n\n")
+
+```
+
+We are interested in using k-means clustering as an unsupervised method, due to its ability to detect unknown patterns. This method only works well with numeric variables, so let us look at identify possible sets of numeric features to use for our segmentation.
+
+#### Demographic and Behavioral Numeric Features
+
+```{r dem_behave_num_feats}
+# list of vectors of feature names
+dem_behave_num_feats_list <- list(num_feats, c(demo_feats, behave_feats))
+
+# Find the intersection of all vectors
+dem_behave_num_feats <- Reduce(intersect, dem_behave_num_feats_list)
+
+dem_behave_num_feats
+```
+
+#### Financial and Account Numeric Features
+
+```{r dem_behave_num_feats}
+# list of vectors of feature names
+fin_acct_num_feats_list <- list(num_feats, c(fin_feats, acct_feats))
+
+# Find the intersection of all vectors
+fin_acct_num_feats <- Reduce(intersect, fin_acct_num_feats_list)
+
+fin_acct_num_feats
+```
+
+On further thought, all the account features are bound to increase with time, hence not be helpful in identifying useful segmentation figures.
+
+Instead we'll use a handpicked mix of customer demographic, behavioral and financial features for our segmentation
+
+***SIDEKICK: TO DO - Include Justifications. Omitting variables with obviously useless but strong association to tenure, such as age. These should also have predictive value if we want to apply this to customers who are currently with the company and haven't been for long, and we want to know if they will have a longer tenture. for example, we can't know currently how long an employment history a customer will eventually have once they have a tenure of \> 59 months.***
+
+```{r}
+num_feats
+```
+
+```{r fin_acct_data}
+# customized set segmentation targets and features
+seg_target <- "HighRetention"
+seg_feats <- c("CommuteTime", "HouseholdSize",  "TownSize", "CardItemsMonthly",
+               "DebtToIncomeRatio", "HHIncome", "CarsOwned", 
+               "TVWatchingHours", "Region", "TotalDebt",
+               "CardSpendMonth", "HHIncome", "CarValue", "TechOwnership", "NumAddOns")
+
+
+# subset features and target
+seg_data <- data %>%
+  select(all_of(c(seg_target, seg_feats)))
+
+glimpse(seg_data)
+```
+
+### Segmentation Methods
+
+#### Supervised Decision Tree Segmentation
+
+##### Fit and Prune Tree
+
+```{r dec_tree}
+# create formula string
+formula_string <- paste(seg_target, "~", paste(seg_feats, collapse = " + "))
+
+# convert to formula object
+formula <- as.formula(formula_string)
+
+
+# Fit the decision tree model using rpart
+tree_model <- rpart(formula, data = seg_data, control = rpart.control(cp = 0.0001))
+
+# Print the complexity parameter table
+print(tree_model$cptable)
+```
+
+```{r}
+# Find the best cp value based on minimum rel error
+best_cp <- tree_model$cptable[which.min(tree_model$cptable[,"xerror"]),"CP"]
+
+# Prune the tree using the best cp value
+pruned_tree_model <- prune(tree_model, cp=best_cp)
+```
+
+##### Visualize Tree
+
+```{r dec_tree_viz}
+# Visualize the pruned decision tree
+rpart.plot(pruned_tree_model, faclen = 0, type=0, extra= 104)
+```
+
+##### Variable Importances
+
+```{r feat_imp}
+# Calculate and plot feature importances
+vip(pruned_tree_model, method = "model", geom = "point")
+```
+
+We might want to investigate further to ensure that `NumAddOns` isn't just a proxy for tenure itself, but rather reflects some underlying pattern or behavior.
+
+##### Create Dec Tree Segment Rules
+
+We number all leaves in the tree diagram in order from left to right (note all nodes contain at least one observation). These are the segment labels, and we can assign observations to these segments based on the decision rules.
+
+```{r}
+# assign segments based on decision tree leaves
+seg_data <- seg_data %>%
+  mutate(TreeSeg = case_when(
+    NumAddOns < 1 ~ 1, 
+    NumAddOns >= 1 & TechOwnership < 2 ~ 2,
+    NumAddOns >= 1 & TechOwnership >= 2 & HouseholdSize < 2.1 & HHIncome < 98e+3 ~ 3,
+    NumAddOns >= 1 & TechOwnership >= 2 & HouseholdSize < 2.1 & HHIncome >= 98e+3 ~ 4,
+    NumAddOns >= 1 & TechOwnership >=2 & HouseholdSize >= 2.1 & HHIncome < 80e+3 & HHIncome >= 18e+3 ~ 5,
+    NumAddOns >= 1 & TechOwnership >=2 & HouseholdSize >= 2.1 & HHIncome < 80e+3 & HHIncome < 18e+3 & CommuteTime < 22 ~ 6,
+    NumAddOns >= 1 & TechOwnership >=2 & HouseholdSize >= 2.1 & HHIncome < 80e+3 & HHIncome < 18e+3 & CommuteTime >= 22 ~ 7,
+    NumAddOns >= 1 & TechOwnership >=2 & HouseholdSize >= 2.1 & HHIncome >= 80e+3 ~ 8
+  )) %>%
+  mutate(TreeSeg = as.factor(TreeSeg)) %>% # cast to fct - segment is a categorical variable, not ordinal
+  relocate(TreeSeg)
+```
+
+##### Plot Dec Tree Segment Distribution
+
+```{r treeseg_dist_plot}
+tree_seg_prop <- seg_data %>%
+  group_by(TreeSeg) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / sum(count))
+
+
+p <- tree_seg_prop %>%
+  ggplot(aes(x = TreeSeg, y = proportion)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  labs(title = "Distribution of Decision Tree Segments",
+       x = "TreeSeg",
+       y = "Proportion") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+##### Retention vs. Segments Plots
+
+###### Stacked Bar Chart of Segments vs. Retention
+
+```{r treeseg_by_highretention_stacked_bar}
+ggplot(seg_data, aes(x = TreeSeg, fill = as.factor(HighRetention))) +
+  geom_bar(position = "stack") +
+  labs(title = "Stacked Bar Plot of TreeSeg Colored by HighRetention",
+       x = "TreeSeg",
+       y = "Count",
+       fill = "HighRetention") +
+  theme_minimal()
+```
+
+###### Joint Probability Distribution
+
+```{r}
+# Calculate joint probabilities
+retention_tree_seg_dist <- seg_data %>%
+  group_by(TreeSeg, HighRetention) %>%
+  summarize(Count = n(), .groups = 'drop') %>%
+  mutate(JointProbability = Count / sum(Count))
+
+# Print the joint probabilities of high retention costy
+retention_tree_seg_dist %>% 
+  filter(HighRetention == TRUE)
+```
+
+```{r}
+# Joint probability density plot
+p <- ggplot(retention_tree_seg_dist, aes(x = TreeSeg, y = HighRetention, fill = JointProbability)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "darkblue") +
+  labs(title = "Heat Map of Joint Probability",
+       x = "TreeSeg",
+       y = "HighRetention",
+       fill = "JointProbability") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+```{r}
+# Calculate probabilities normalized within each segment
+retent_tree_seg_normed_prob <- seg_data %>%
+  group_by(TreeSeg, HighRetention) %>%
+  summarize(Count = n(), .groups = 'drop') %>%
+  group_by(TreeSeg) %>%
+  mutate(NormalizedProbability = Count / sum(Count))
+
+# Print the joint probabilities of high retention costy
+retent_tree_seg_normed_prob %>% 
+  filter(HighRetention == TRUE)
+```
+
+```{r}
+# Joint probability density plot
+p <- ggplot(retent_tree_seg_normed_prob, aes(x = TreeSeg, y = HighRetention, fill = NormalizedProbability)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "darkblue") +
+  labs(title = "Heat Map of Tree Segment Normalized Probability",
+       x = "TreeSeg",
+       y = "HighRetention",
+       fill = "NormalizedProbability") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+
+
+#### Unsupervised k-Means Clustering Segmentation
+
+##### Scale Data
+
+```{r scale_seg_data}
+# encode target as integer
+seg_data <- seg_data %>% 
+  mutate(HighRetention = case_when(
+    HighRetention == FALSE ~ 0,
+    HighRetention == TRUE ~ 1
+  )) 
+
+
+# standardize
+seg_data_sc <- as_tibble(seg_data %>%
+                         select(!c(HighRetention, TreeSeg)) %>% 
+                          scale()
+                         )
+
+seg_data_sc <- seg_data_sc 
+
+seg_data_sc
+```
+
+##### Elbow Method for Selecting Number of Clusters
+
+The elbow method looks for a elbow (kink) in the $k$ vs total within cluster variation graph, and selects the minimum just before the kink.
+
+```{r}
+
+ks <- 1:12
+tot_within_ss <- sapply(ks, function(k) {
+    set.seed(27)
+    cl <- kmeans(seg_data_sc, k)
+    cl$tot.withinss
+})
+
+# write to disk for Tableau plotting
+elbow_tb <- tibble(kS=ks, TotWithinSS=tot_within_ss)
+
+p <- elbow_tb %>%
+  ggplot(aes(x = kS, y=TotWithinSS)) +
+  geom_line(color='blue') +
+  geom_point(color='darkblue')
+  labs(title = "Total Within Cluster Sum of Squares vs. Number of Clusters",
+       x = "k",
+       y = "tot_within_ss") +
+  theme_minimal() +
+  scale_x_continuous(breaks = ks)
+
+# ggplotly(p)
+p
+
+write_csv(elbow_tb, "Elbow.csv")
+```
+
+There is no clear kink, so we are freer to choose a value of $k$ ourselves, we will select $k=8$, to match the number of leaves in the decision tree. This also provides more fine-grained information when considering high-vs-low retention customers.
+
+***SIDEKICK To Do - Note this was determined after much trial an error, and justified by finding a good separation of high retention by cluster, as well as a good separation of features, as determined by the variance (spread) of the cluster means for each feature.
+
+```{r}
+set.seed(27)
+NUM_CLUSTERS <- 8
+kclust <- kmeans(seg_data_sc, centers = NUM_CLUSTERS)
+
+# add back in unscaled columns
+seg_data_sc$HighRetention <- seg_data$HighRetention
+seg_data_sc$TreeSeg <- seg_data$TreeSeg
+
+# add segments to scaled and unscaled numeric features
+seg_data_sc$kSeg <- as.factor(kclust$cluster)
+seg_data$kSeg <- as.factor(kclust$cluster)
+
+# relocate
+seg_data_sc <- seg_data_sc %>% 
+  relocate(HighRetention, TreeSeg, kSeg)
+seg_data <- seg_data %>% 
+  relocate(HighRetention, TreeSeg, kSeg)
+```
+
+```{r}
+kseg_prop <- seg_data %>%
+  group_by(kSeg) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / sum(count))
+
+
+p <- kseg_prop %>%
+  ggplot(aes(x = kSeg, y = proportion)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  labs(title = "Distribution of k-Means Segments",
+       x = "kSeg",
+       y = "Proportion") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+##### Retention vs. Segments Plots
+
+###### Stacked Bar Chart of Segments vs. Retention
+
+```{r}
+p <- ggplot(seg_data, aes(x = kSeg, fill = as.factor(HighRetention))) +
+  geom_bar(position = "stack") +
+  labs(title = "Stacked Bar Plot of kMeans Segments Colored by High Retention",
+       x = "TreeSeg",
+       y = "Count",
+       fill = "HighRetention") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+###### Joint Probability Distribution
+
+```{r}
+# Calculate joint probabilities
+retention_kseg_dist <- seg_data %>%
+  group_by(kSeg, HighRetention) %>%
+  summarize(Count = n(), .groups = 'drop') %>%
+  mutate(JointProbability = Count / sum(Count))
+
+# Print the joint probabilities of high retention costy
+retention_kseg_dist
+```
+
+```{r}
+# Joint probability density plot
+p <- ggplot(retention_kseg_dist, aes(x = kSeg, y = HighRetention, fill = JointProbability)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "darkblue") +
+  labs(title = "Heat Map of Joint Probability",
+       x = "kSeg",
+       y = "HighRetention",
+       fill = "JointProbability") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+```{r}
+# Calculate probabilities normalized within each segment
+retent_kseg_normed_prob <- seg_data %>%
+  group_by(kSeg, HighRetention) %>%
+  summarize(Count = n(), .groups = 'drop') %>%
+  group_by(kSeg) %>%
+  mutate(NormalizedProbability = Count / sum(Count))
+
+# Print the joint probabilities of high retention costy
+retent_kseg_normed_prob
+```
+
+```{r}
+# Joint probability density plot
+p <- ggplot(retent_kseg_normed_prob, aes(x = kSeg, y = HighRetention, fill = NormalizedProbability)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "darkblue") +
+  labs(title = "Heat Map of Segment Normalized Probability",
+       x = "kSeg",
+       y = "HighRetention",
+       fill = "NormalizedProbability") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+```{r}
+p <- ggplot(seg_data, aes(x = kSeg, fill = as.factor(HighRetention))) +
+  geom_bar(position = "stack") +
+  labs(title = "Stacked Bar Plot of kSeg Colored by HighRetention",
+       x = "kSeg",
+       y = "Count",
+       fill = "HighRetention") +
+  theme_minimal()
+
+# converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
+ggplotly(p)
+
+# uncomment when knitting to .docx
+# p
+```
+
+## Findings
+
+```{r save_seg_data}
+write_csv(seg_data_sc, "Segmented_Customer_Data_Scaled.csv")
+write_csv(seg_data, "Segmented_Customer_Data.csv")
+```
+
+### Evaluate Segmentation Solutions
+
+It would be nice to how similar the segments discovered by the two methods are.
+
+
+### Overview of Segmentation Results
+
+### Summary Stats Across Segments
+
+#### Within Segment Mean and Standard Deviation
+
+
+Summarizing statistics for numerical features for the segment profiles (using the unscaled data).
+
+```{r treeseg_sc_summary_stats}
+# Summarize statistics for each segment
+treeseg_sc_summary_stats <- seg_data_sc %>%
+  select(!kSeg) %>%
+  add_count(TreeSeg) %>%
+  group_by(TreeSeg, n) %>%
+  summarize(
+    across(.cols = everything(), list(mean = ~ mean(.), sd = ~ sd(.)), .names = "{col}_{fn}"),
+    HighRetention_Percent = mean(HighRetention) * 100,
+    .groups = 'drop'
+  ) %>%
+  select(-contains("HighRetention_sd")) %>% # remove the unnecessary sd column for HighRetention
+  rename_with(~ gsub("_", "_sc_", .)) %>% 
+  relocate(TreeSeg
+           , HighRetention_sc_mean) # put HighRetention up front
+
+# save to disk
+write_csv(treeseg_sc_summary_stats, 'treeseg_sc_summary_stats.csv')
+
+treeseg_sc_summary_stats
+```
+
+```{r kseg_sc_summary_stats}
+# Summarize statistics for each segment
+kseg_sc_summary_stats <- seg_data_sc %>%
+  select(!TreeSeg) %>%
+  add_count(kSeg) %>%
+  group_by(kSeg, n) %>%
+  summarize(
+    across(.cols = everything(), list(mean = ~ mean(.), sd = ~ sd(.)), .names = "{col}_{fn}"),
+    HighRetention_Percent = mean(HighRetention) * 100,
+    .groups = 'drop'
+  ) %>%
+  select(-contains("HighRetention_sd")) %>% # remove the unnecessary sd column for HighRetention
+  rename_with(~ gsub("_", "_sc_", .)) %>% 
+  relocate(kSeg, HighRetention_sc_mean) # put HighRetention up front
+
+# save to disk
+write_csv(kseg_sc_summary_stats, 'kseg_sc_summary_stats.csv')
+
+kseg_sc_summary_stats
+```
+
+#### Measuring Separation with Variance of Means Across Segments
+
+```{r tree_seg_vars}
+tree_seg_vars <- treeseg_sc_summary_stats %>%
+ select(contains('_mean')) %>%
+  select(!HighRetention_sc_mean) %>%
+ summarise(across(everything(), var, na.rm = TRUE)) %>%
+  rename_with(~ paste0("seg_var_", .))
+
+tree_seg_vars
+```
+
+```{r kseg_seg_vars}
+kseg_seg_vars <- kseg_sc_summary_stats %>%
+ select(contains('_mean')) %>%
+  select(!HighRetention_sc_mean) %>%
+ summarise(across(everything(), var, na.rm = TRUE)) %>%
+  rename_with(~ paste0("seg_var_", .))
+
+kseg_seg_vars
+```
+
+#### Sum and Average Segment Separation
+
+```{r sum_tree_seg_vars}
+cat("Sum of Variances of Decision Tree Segment Means:", sum(tree_seg_vars))
+```
+
+```{r mean_tree_seg_vars}
+cat("Average Variance of Decision Tree Segment Means:", mean(t(tree_seg_vars)))
+```
+
+```{r sum_kseg_vars}
+cat("Sum of Variances of k-Means Segment Means:", sum(kseg_seg_vars))
+```
+
+```{r mean_tree_seg_vars}
+cat("Average Variance of k-Means Segment Means:", mean(t(kseg_seg_vars)))
+```
+
+#### by Retention Within Segment Mean and Standard Deviation
+
+```{r treeseg_by_retent_summary_stats}
+# Summarize statistics for each segment
+treeseg_by_retention_summary_stats <- seg_data_sc %>%
+  select(!kSeg) %>%
+  add_count(TreeSeg) %>%
+  group_by(TreeSeg, HighRetention, n) %>%
+  summarize(
+    across(.cols = everything(), list(mean = ~ mean(.), sd = ~ sd(.)), .names = "{col}_{fn}"),
+    .groups = 'drop'
+  ) %>%
+  rename_with(~ gsub("_", "_sc_", .)) %>% 
+  relocate(TreeSeg)
+
+treeseg_by_retention_summary_stats
+
+```
+
+```{r kseg_by_retent_summary_stats}
+# Summarize statistics for each segment
+kseg_by_retention_summary_stats <- seg_data_sc %>%
+  select(!TreeSeg) %>%
+  add_count(kSeg) %>%
+  group_by(kSeg, HighRetention, n) %>%
+  summarize(
+    across(.cols = everything(), list(mean = ~ mean(.), sd = ~ sd(.)), .names = "{col}_{fn}"),
+    .groups = 'drop'
+  ) %>%
+  rename_with(~ gsub("_", "_sc_", .)) %>% 
+  relocate(kSeg)
+
+kseg_by_retention_summary_stats
+```
+
+#### by Retention Measuring Separation with Variance of Means Across Segments
+
+```{r tree_by_retent_seg_vars}
+tree_by_retent_seg_vars <- treeseg_by_retention_summary_stats %>%
+  group_by(HighRetention) %>%
+ select(contains('_mean')) %>%
+ summarise(across(everything(), var, na.rm = TRUE)) %>%
+  rename_with(~ paste0("seg_var_", .)) %>%
+  rename(HighRetention=seg_var_HighRetention)
+
+tree_by_retent_seg_vars
+```
+
+```{r kseg_by_retent_seg_vars}
+kseg_by_retent_seg_vars <- kseg_by_retention_summary_stats %>%
+  group_by(HighRetention) %>%
+ select(contains('_mean')) %>%
+ summarise(across(everything(), var, na.rm = TRUE)) %>%
+  rename_with(~ paste0("seg_var_", .)) %>%
+  rename(HighRetention=seg_var_HighRetention)
+
+kseg_by_retent_seg_vars
+```
+
+#### by Retention Sum and Average Separation
+
+```{r tree_by_retent_seg_vars}
+tree_by_retent_seg_vars %>% 
+  select(!HighRetention) %>%
+  rowSums()
+```
+
+```{r kseg_by_retent_seg_vars}
+kseg_by_retent_seg_vars %>% 
+  select(!HighRetention) %>%
+  rowSums()
+```
+
+
+### Segmentation with Preferred Solution
+
+***SIDEKICK: TO DO - Describe justification for choosing k Means segmentation
+#### Visualize Segments
+
+##### Stacked Barplot of High Retention vs. NumAddOns and TechOwnership colored by Segment
+
+##### Scatterplot of Important Features High Retention vs. HHIncome and CarValue colored by Segment
+
+Here's visualization of the segments featuring two real-valued variables.
+
+```{r}
+# Create the 2D scatter plot - must save manually when knitting to .docx
+p <- plot_ly(seg_data, x =  ~HHIncome, y = ~CarValue, z = ~TotalDebt, 
+                color = ~kSeg, colors = "Set1", opacity = 0.5) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'HIIncome'),
+                      yaxis = list(title = 'CarValue'),
+                      zaxis = list(title = 'TotalDebt')),
+         title = "3D Scatter Plot of Segments")
+
+p
+```

@@ -1,0 +1,36 @@
+---
+title: "DSE5004 Segmentation and Clustering"
+author: "Tracey Zicherman"
+date: "2024-06-19"
+---
+
+## Executive Summary
+
+## Methodology
+
+### Customer Features Review and Selection
+
+> Carefully review all available data (i.e., the contents of Customer Database), paying particular attention to distinct data types (e.g., product purchases, demographics, etc.), and identify specific variables you would like to use as the basis of your segmentation analysis - make sure to also consider any new variables or indicators you might have previously (Data Due Diligence Project) created, or consider creating new variables now it is important to be able to justify your choice(s)
+
+### Segmentation Methods
+
+> Review the available clustering techniques and select two (2) distinct techniques - justify your choices (i.e., why those techniques and not others)
+> Segment your customer base using the two techniques you selected (above)
+
+## Findings
+
+### Evaluate Segmentation Solutions
+
+> Evaluate the practical efficacy of your segmentation solutions - conduct side-by-side comparison of the two sets of results, and select the solution that you would recommend being used; make sure to clearly justify your reasoning
+
+### Segmentation with Preferred Solution
+
+> Using the solution, you chose above, group all customers into the created segments
+
+### Overview of Segmentation Results
+
+
+> Provide a detailed overview (i.e., the number of segments, cross-segment differences, segment- specific profiles, etc.) of the selected segmentation results, expressly differentiating between 'high' and 'low' retention segments; make sure to provide sound justification for why you consider some segments to be 'high retention' while others to be low retention.
+
+
+Include Tableau visualizations here
