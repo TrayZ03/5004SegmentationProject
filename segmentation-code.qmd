@@ -74,7 +74,7 @@ skim(data %>% select(PhoneCoTenure))
 
 For our purposes, we will define high retention customers to be those who have a tenure equal to or greater than 75% of the total customer database, i.e. those in the upper quartile (customers for which `PhoneCoTenure > 59`). We'll code this as Yes/No and treat it as a factor for agreement with later packages.
 
-***SIDEKICK: How to mention that this is a new feature? It wasn't included in Due Diligence.***
+
 
 ```{r}
 # proportion of customers with maximum tenure
@@ -206,7 +206,7 @@ On further thought, all the account features are bound to increase with time, he
 
 Instead we'll use a handpicked mix of customer demographic, behavioral and financial features for our segmentation
 
-***SIDEKICK: TO DO - Include Justifications. Omitting variables with obviously useless but strong association to tenure, such as age. These should also have predictive value if we want to apply this to customers who are currently with the company and haven't been for long, and we want to know if they will have a longer tenture. for example, we can't know currently how long an employment history a customer will eventually have once they have a tenure of \> 59 months.***
+
 
 ```{r}
 num_feats
@@ -312,10 +312,10 @@ p <- tree_seg_prop %>%
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ##### Retention vs. Segments Plots
@@ -358,10 +358,10 @@ p <- ggplot(retention_tree_seg_dist, aes(x = TreeSeg, y = HighRetention, fill = 
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ```{r}
@@ -389,10 +389,10 @@ p <- ggplot(retent_tree_seg_normed_prob, aes(x = TreeSeg, y = HighRetention, fil
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 
@@ -455,7 +455,6 @@ write_csv(elbow_tb, "Elbow.csv")
 
 There is no clear kink, so we are freer to choose a value of $k$ ourselves, we will select $k=8$, to match the number of leaves in the decision tree. This also provides more fine-grained information when considering high-vs-low retention customers.
 
-***SIDEKICK To Do - Note this was determined after much trial an error, and justified by finding a good separation of high retention by cluster, as well as a good separation of features, as determined by the variance (spread) of the cluster means for each feature.
 
 ```{r}
 set.seed(27)
@@ -493,10 +492,10 @@ p <- kseg_prop %>%
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ##### Retention vs. Segments Plots
@@ -513,10 +512,10 @@ p <- ggplot(seg_data, aes(x = kSeg, fill = as.factor(HighRetention))) +
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ###### Joint Probability Distribution
@@ -544,10 +543,10 @@ p <- ggplot(retention_kseg_dist, aes(x = kSeg, y = HighRetention, fill = JointPr
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ```{r}
@@ -574,10 +573,10 @@ p <- ggplot(retent_kseg_normed_prob, aes(x = kSeg, y = HighRetention, fill = Nor
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ```{r}
@@ -590,10 +589,10 @@ p <- ggplot(seg_data, aes(x = kSeg, fill = as.factor(HighRetention))) +
   theme_minimal()
 
 # converts static ggplot plot to dynamic plotly plot - comment when knitting to .docx
-ggplotly(p)
+#ggplotly(p)
 
 # uncomment when knitting to .docx
-# p
+ p
 ```
 
 ## Findings
@@ -776,7 +775,6 @@ kseg_by_retent_seg_vars %>%
 
 ### Segmentation with Preferred Solution
 
-***SIDEKICK: TO DO - Describe justification for choosing k Means segmentation
 #### Visualize Segments
 
 ##### Stacked Barplot of High Retention vs. NumAddOns and TechOwnership colored by Segment
