@@ -604,9 +604,6 @@ write_csv(seg_data, "Segmented_Customer_Data.csv")
 
 ### Evaluate Segmentation Solutions
 
-It would be nice to how similar the segments discovered by the two methods are.
-
-
 ### Overview of Segmentation Results
 
 ### Summary Stats Across Segments
