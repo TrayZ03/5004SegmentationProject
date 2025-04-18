@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "locale": "en_US.UTF-8",
+  "platform": "posit-connect",
+  "metadata": {
+    "appmode": "quarto-static",
+    "primary_rmd": "segmentation-report.qmd",
+    "title": "Customer Segmentation and Retention Analysis",
+    "description": "Analysis of customer data to identify key segments based on retention patterns using supervised and unsupervised methods"
+  },
+  "packages": {
+    "cran": [
+      "rpart",
+      "rpart.plot",
+      "vip",
+      "tidyverse",
+      "plotly",
+      "skimr",
+      "DescTools"
+    ]
+  },
+  "files": [
+    "segmentation-report.qmd",
+    "Clean_Customer_Dataset.csv",
+    "New_Customer_Dataset.csv",
+    "treeseg_sc_summary_stats.csv",
+    "kseg_sc_summary_stats.csv",
+    "Elbow.csv"
+  ],
+  "python": {
+    "enabled": false
+  }
+}
